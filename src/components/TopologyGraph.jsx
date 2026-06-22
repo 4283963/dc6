@@ -113,7 +113,7 @@ function buildStableLinks(nodes) {
   return links
 }
 
-export default function TopologyGraph({ devices, onSelectDevice, selectedDevice }) {
+export default function TopologyGraph({ devices, onSelectDevice, selectedDevice, onRequestConnect }) {
   const svgRef = useRef(null)
   const containerRef = useRef(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
@@ -125,6 +125,11 @@ export default function TopologyGraph({ devices, onSelectDevice, selectedDevice 
   const [hovered, setHovered] = useState(null)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
   const initializedRef = useRef(false)
+
+  const [connectDrag, setConnectDrag] = useState(null)
+  const connectStartRef = useRef(null)
+  const connectMouseRef = useRef({ x: 0, y: 0 })
+  const [connectTarget, setConnectTarget] = useState(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -289,6 +294,60 @@ export default function TopologyGraph({ devices, onSelectDevice, selectedDevice 
     }
   }, [dragging])
 
+  const handleConnectStart = useCallback((e, node) => {
+    e.stopPropagation()
+    e.preventDefault()
+    connectStartRef.current = node
+    connectMouseRef.current = { x: node.x, y: node.y }
+    setConnectDrag(node.id)
+    setConnectTarget(null)
+    if (simulationRef.current) {
+      simulationRef.current.alphaTarget(0)
+    }
+  }, [])
+
+  const handleConnectMove = useCallback((e) => {
+    if (!connectDrag) return
+    const svg = svgRef.current
+    if (!svg) return
+    const rect = svg.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    connectMouseRef.current = { x: mx, y: my }
+
+    let target = null
+    for (const n of nodesRef.current) {
+      if (n.id === connectDrag) continue
+      const dx = mx - n.x
+      const dy = my - n.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist < n.style.size + 10) {
+        const validTargets = ['gateway', 'forwarder']
+        if (validTargets.includes(n.type)) {
+          target = n.id
+          break
+        }
+      }
+    }
+    setConnectTarget(target)
+    forceUpdate(t => t + 1)
+  }, [connectDrag])
+
+  const handleConnectEnd = useCallback(() => {
+    if (!connectDrag) return
+
+    const source = connectStartRef.current
+    const target = connectTarget ? nodesRef.current.find(n => n.id === connectTarget) : null
+
+    if (source && target && onRequestConnect) {
+      onRequestConnect({ source: { ...source }, target: { ...target } })
+    }
+
+    connectStartRef.current = null
+    setConnectDrag(null)
+    setConnectTarget(null)
+  }, [connectDrag, connectTarget, onRequestConnect])
+
   const getLinkPath = (link) => {
     const source = typeof link.source === 'object' ? link.source : nodesRef.current.find(n => n.id === link.source)
     const target = typeof link.target === 'object' ? link.target : nodesRef.current.find(n => n.id === link.target)
@@ -333,9 +392,27 @@ export default function TopologyGraph({ devices, onSelectDevice, selectedDevice 
     <div
       ref={containerRef}
       className="topology-container"
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseMove={(e) => {
+        if (connectDrag) {
+          handleConnectMove(e)
+        } else {
+          handleMouseMove(e)
+        }
+      }}
+      onMouseUp={() => {
+        if (connectDrag) {
+          handleConnectEnd()
+        } else {
+          handleMouseUp()
+        }
+      }}
+      onMouseLeave={() => {
+        if (connectDrag) {
+          handleConnectEnd()
+        } else {
+          handleMouseUp()
+        }
+      }}
     >
       <svg
         ref={svgRef}
@@ -411,6 +488,34 @@ export default function TopologyGraph({ devices, onSelectDevice, selectedDevice 
             )
           })}
         </g>
+
+        {connectDrag && connectStartRef.current && (
+          <g className="connect-line-layer">
+            <line
+              x1={connectStartRef.current.x}
+              y1={connectStartRef.current.y}
+              x2={connectMouseRef.current.x}
+              y2={connectMouseRef.current.y}
+              stroke={connectTarget ? '#10b981' : '#00e5ff'}
+              strokeWidth={connectTarget ? 3 : 2}
+              strokeDasharray="8 4"
+              style={{
+                filter: `drop-shadow(0 0 6px ${connectTarget ? '#10b981' : '#00e5ff'})`,
+              }}
+            />
+            <circle
+              cx={connectMouseRef.current.x}
+              cy={connectMouseRef.current.y}
+              r={connectTarget ? 10 : 6}
+              fill={connectTarget ? '#10b981' : '#00e5ff'}
+              style={{
+                filter: `drop-shadow(0 0 8px ${connectTarget ? '#10b981' : '#00e5ff'})`,
+              }}
+            >
+              <animate attributeName="r" values={connectTarget ? "10;14;10" : "6;9;6"} dur="0.8s" repeatCount="indefinite" />
+            </circle>
+          </g>
+        )}
 
         <g className="nodes-layer">
           {nodesRef.current.map(node => {
@@ -559,6 +664,31 @@ export default function TopologyGraph({ devices, onSelectDevice, selectedDevice 
                     >
                       新
                     </text>
+                  </g>
+                )}
+
+                {(isHovered || connectDrag) && node.type === 'camera' && (
+                  <g
+                    transform={`translate(${style.size + 4}, 0)`}
+                    className="connect-handle"
+                    onMouseDown={(e) => handleConnectStart(e, node)}
+                    style={{ cursor: 'crosshair' }}
+                  >
+                    <circle r="10" fill="rgba(16, 185, 129, 0.2)" stroke="#10b981" strokeWidth="2" />
+                    <circle r="4" fill="#10b981">
+                      <animate attributeName="r" values="4;5;4" dur="1.5s" repeatCount="indefinite" />
+                    </circle>
+                  </g>
+                )}
+
+                {connectTarget === node.id && (
+                  <g className="target-highlight">
+                    <circle r={style.size + 16} fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="6 3">
+                      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="4s" repeatCount="indefinite" />
+                    </circle>
+                    <circle r={style.size + 22} fill="none" stroke="#10b981" strokeWidth="1" opacity="0.5" strokeDasharray="3 6">
+                      <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="6s" repeatCount="indefinite" />
+                    </circle>
                   </g>
                 )}
               </g>

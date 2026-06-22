@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import TopologyGraph from './components/TopologyGraph.jsx'
 import ControlPanel from './components/ControlPanel.jsx'
+import ConnectConfirmModal from './components/ConnectConfirmModal.jsx'
 import './App.css'
 
 const MOCK_DEVICES = [
@@ -22,6 +23,10 @@ function App() {
   const [scanProgress, setScanProgress] = useState(0)
   const [selectedDevice, setSelectedDevice] = useState(null)
   const deviceCounterRef = useRef({ gateway: 10, camera: 10, forwarder: 10, device: 10 })
+
+  const [connectModal, setConnectModal] = useState({ visible: false, source: null, target: null })
+  const [isWriting, setIsWriting] = useState(false)
+  const [writeResult, setWriteResult] = useState(null)
 
   useEffect(() => {
     if (window.streamAPI && window.streamAPI.onScanProgress) {
@@ -78,6 +83,42 @@ function App() {
     setSelectedDevice(device)
   }, [])
 
+  const handleRequestConnect = useCallback(({ source, target }) => {
+    setWriteResult(null)
+    setConnectModal({ visible: true, source, target })
+  }, [])
+
+  const handleCancelConnect = useCallback(() => {
+    setConnectModal({ visible: false, source: null, target: null })
+    setWriteResult(null)
+  }, [])
+
+  const handleConfirmWrite = useCallback(async (hclConfig) => {
+    setIsWriting(true)
+    setWriteResult(null)
+    try {
+      let result
+      if (window.streamAPI && window.streamAPI.writeConfig) {
+        result = await window.streamAPI.writeConfig({
+          content: hclConfig,
+          filePath: '/etc/gateway/config.hcl'
+        })
+      } else {
+        await new Promise(r => setTimeout(r, 800))
+        result = { success: true, data: { path: '/etc/gateway/config.hcl', size: hclConfig.length } }
+      }
+      if (result?.success) {
+        setWriteResult({ success: true })
+      } else {
+        setWriteResult({ success: false, error: result?.error || '写入失败' })
+      }
+    } catch (err) {
+      setWriteResult({ success: false, error: err.message || '未知错误' })
+    } finally {
+      setIsWriting(false)
+    }
+  }, [])
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -128,9 +169,19 @@ function App() {
             devices={devices}
             onSelectDevice={handleSelectDevice}
             selectedDevice={selectedDevice}
+            onRequestConnect={handleRequestConnect}
           />
         </section>
       </main>
+
+      <ConnectConfirmModal
+        source={connectModal.source}
+        target={connectModal.target}
+        onConfirm={handleConfirmWrite}
+        onCancel={handleCancelConnect}
+        isWriting={isWriting}
+        writeResult={writeResult}
+      />
     </div>
   )
 }

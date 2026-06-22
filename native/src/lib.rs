@@ -231,8 +231,67 @@ fn scan_rtsp_ports(mut cx: FunctionContext) -> JsResult<JsPromise> {
     Ok(promise)
 }
 
+fn write_config_file(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let path_handle = cx.argument::<JsString>(0)?;
+    let content_handle = cx.argument::<JsString>(1)?;
+    let path = path_handle.value(&mut cx);
+    let content = content_handle.value(&mut cx);
+
+    let channel = cx.channel();
+    let (deferred, promise) = cx.promise();
+
+    std::thread::spawn(move || {
+        let result = write_config_file_inner(&path, &content);
+        deferred.settle_with(&channel, move |mut cx| match result {
+            Ok((path_val, size)) => {
+                let obj = JsObject::new(&mut cx);
+                let p = cx.string(path_val);
+                let s = cx.number(size as f64);
+                let ok = cx.boolean(true);
+                obj.set(&mut cx, "success", ok)?;
+                obj.set(&mut cx, "path", p)?;
+                obj.set(&mut cx, "size", s)?;
+                Ok(obj.upcast())
+            }
+            Err(e) => {
+                let obj = JsObject::new(&mut cx);
+                let ok = cx.boolean(false);
+                let err = cx.string(e);
+                obj.set(&mut cx, "success", ok)?;
+                obj.set(&mut cx, "error", err)?;
+                Ok(obj.upcast())
+            }
+        });
+    });
+
+    Ok(promise)
+}
+
+fn write_config_file_inner(path: &str, content: &str) -> Result<(String, usize), String> {
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+
+    let file_path = Path::new(path);
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+
+    let temp_path = format!("{}.tmp", path);
+    {
+        let mut file = fs::File::create(&temp_path).map_err(|e| format!("创建临时文件失败: {}", e))?;
+        file.write_all(content.as_bytes()).map_err(|e| format!("写入文件失败: {}", e))?;
+        file.sync_all().map_err(|e| format!("同步文件失败: {}", e))?;
+    }
+
+    fs::rename(&temp_path, path).map_err(|e| format!("重命名文件失败: {}", e))?;
+
+    Ok((path.to_string(), content.len()))
+}
+
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("scanRtspPorts", scan_rtsp_ports)?;
+    cx.export_function("writeConfigFile", write_config_file)?;
     Ok(())
 }

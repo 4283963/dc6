@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('streamAPI', {
     const handler = (_event, payload) => callback(payload)
     ipcRenderer.on('scan:progress', handler)
     return () => ipcRenderer.removeListener('scan:progress', handler)
-  }
+  },
+  writeConfig: (payload) => ipcRenderer.invoke('config:write', payload)
 })
