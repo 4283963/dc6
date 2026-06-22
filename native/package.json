@@ -1,0 +1,13 @@
+{
+  "name": "stream-native",
+  "version": "1.0.0",
+  "description": "Rust native module for streaming device scanning",
+  "main": "index.node",
+  "scripts": {
+    "build": "cargo-cp-artifact -nc index.node -- cargo build --release",
+    "build-debug": "cargo-cp-artifact -nc index.node -- cargo build"
+  },
+  "devDependencies": {
+    "cargo-cp-artifact": "^0.1"
+  }
+}
